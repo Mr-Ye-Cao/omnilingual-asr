@@ -14,7 +14,7 @@ import queue
 import threading
 
 # Configuration
-SERVER_URL = "http://localhost:5000"  # Change to your server IP if different
+SERVER_URL = "http://localhost:5000"  # Local server for testing
 SAMPLE_RATE = 16000  # 16kHz for the model
 CHUNK_DURATION = 3  # seconds per chunk
 CHANNELS = 1  # mono audio
