@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Live Transcription Client with Voice Activity Detection
-Google Live Transcribe-style experience: detects speech boundaries and transcribes complete utterances
+Live Transcription Client - Optimized for Interview/Playback Audio
+Tuned for longer utterances and natural pauses in interviews
 """
 
 import sys
@@ -21,15 +21,19 @@ SAMPLE_RATE = 16000  # 16kHz for the model
 CHANNELS = 1  # mono audio
 DTYPE = np.float32
 
-# VAD Configuration
-VAD_AGGRESSIVENESS = 2  # 0-3, higher = more aggressive filtering (2 is balanced)
+# VAD Configuration - Optimized for Interview Audio
+VAD_AGGRESSIVENESS = 1  # 0-3: Lower = more sensitive (better for speaker audio)
 VAD_FRAME_DURATION = 30  # ms - webrtcvad supports 10, 20, or 30
-SILENCE_DURATION = 0.8  # seconds of silence before ending utterance
-MIN_UTTERANCE_DURATION = 0.5  # minimum seconds of speech to process
+SILENCE_DURATION = 1.5  # seconds of silence before ending utterance (longer for interviews)
+MIN_UTTERANCE_DURATION = 1.0  # minimum seconds of speech to process (filter short artifacts)
 MAX_UTTERANCE_DURATION = 30  # max seconds (model supports up to 40s)
 
 # Streaming partial results
-SHOW_PARTIAL_EVERY = 3  # Show partial transcription every N seconds while speaking
+SHOW_PARTIAL_EVERY = 5  # Show partial transcription every N seconds while speaking
+
+# Language - Set to None for auto-detect, or specify language code
+# Examples: "jpn" (Japanese), "eng" (English), "cmn" (Mandarin), "spa" (Spanish)
+LANGUAGE = "jpn"  # Japanese for interview
 
 # Audio queue for thread-safe communication
 audio_queue = queue.Queue()
@@ -40,7 +44,7 @@ vad = webrtcvad.Vad(VAD_AGGRESSIVENESS)
 def audio_callback(indata, frames, time_info, status):
     """Callback for audio input stream"""
     if status:
-        print(f"Audio status: {status}", file=sys.stderr)
+        print(f"⚠️  Audio status: {status}", file=sys.stderr)
     audio_queue.put(indata.copy())
 
 def float32_to_int16(audio_float32):
@@ -58,7 +62,7 @@ def is_speech(audio_frame_int16):
         # If VAD fails, assume it's speech to be safe
         return True
 
-def send_audio_for_transcription(audio_data, lang=None, is_partial=False):
+def send_audio_for_transcription(audio_data, lang=None):
     """Send audio chunk to server for transcription"""
     try:
         # Convert to bytes
@@ -90,17 +94,19 @@ def send_audio_for_transcription(audio_data, lang=None, is_partial=False):
             return None
 
     except Exception as e:
-        print(f"\nError: {e}", file=sys.stderr)
+        print(f"\n⚠️  Error: {e}", file=sys.stderr)
         return None
 
 def main():
     print("=" * 70)
-    print("Live Transcription - Google Live Transcribe Style")
+    print("Live Transcription - Interview/Playback Mode")
     print("=" * 70)
     print(f"Server: {SERVER_URL}")
+    print(f"Language: {LANGUAGE if LANGUAGE else 'Auto-detect'}")
     print(f"Sample Rate: {SAMPLE_RATE} Hz")
-    print(f"VAD Aggressiveness: {VAD_AGGRESSIVENESS}/3")
-    print(f"Silence Threshold: {SILENCE_DURATION}s")
+    print(f"VAD Aggressiveness: {VAD_AGGRESSIVENESS}/3 (optimized for speaker audio)")
+    print(f"Silence Threshold: {SILENCE_DURATION}s (longer for interview pauses)")
+    print(f"Min Utterance: {MIN_UTTERANCE_DURATION}s")
     print("=" * 70)
 
     # Check server health
@@ -115,7 +121,7 @@ def main():
         print(f"✗ Cannot connect to server: {e}")
         return
 
-    print("\n🎤 Listening... Speak naturally, I'll detect sentence boundaries.")
+    print("\n🎤 Listening... Optimized for interview/playback audio.")
     print("   Press Ctrl+C to stop.\n")
 
     # State management
@@ -157,7 +163,8 @@ def main():
                             speech_start_time = time.time()
                             last_partial_time = speech_start_time
                             utterance_buffer = [chunk_flat]
-                            print(f"[{time.strftime('%H:%M:%S')}] 🎙️  Speaking...", end="", flush=True)
+                            sys.stdout.write(f"[{time.strftime('%H:%M:%S')}] 🎙️  ")
+                            sys.stdout.flush()
                         else:
                             # Continue accumulating speech
                             utterance_buffer.append(chunk_flat)
@@ -173,26 +180,25 @@ def main():
 
                                 if elapsed >= MAX_UTTERANCE_DURATION:
                                     # Hit max duration, finalize this utterance
-                                    print(f"\n[{time.strftime('%H:%M:%S')}] ⏱️  Max duration reached ({elapsed:.1f}s), finalizing...")
-                                    transcription = send_audio_for_transcription(audio_partial)
+                                    sys.stdout.write(f" [{elapsed:.1f}s]\n")
+                                    sys.stdout.flush()
+
+                                    transcription = send_audio_for_transcription(audio_partial, LANGUAGE)
 
                                     if transcription:
-                                        print(f"   → {transcription}")
-                                    print()
+                                        print(f"   → {transcription}\n")
+                                    else:
+                                        print(f"   → (no transcription)\n")
 
                                     # Reset for next utterance
                                     is_speaking = False
                                     utterance_buffer = []
                                     silence_frames = 0
                                 else:
-                                    # Show partial result
-                                    print(f" ({elapsed:.1f}s)", end="", flush=True)
+                                    # Show partial progress
+                                    sys.stdout.write(".")
+                                    sys.stdout.flush()
                                     last_partial_time = current_time
-
-                                    # Optional: could send partial transcription here for real-time feedback
-                                    # transcription = send_audio_for_transcription(audio_partial, is_partial=True)
-                                    # if transcription:
-                                    #     print(f"\n   [partial] {transcription}", end="", flush=True)
 
                     else:  # Silence
                         if is_speaking:
@@ -214,19 +220,19 @@ def main():
                                     if len(audio_data) > num_silence_samples:
                                         audio_data = audio_data[:-num_silence_samples]
 
-                                    print(f" ({elapsed:.1f}s)")
-                                    print(f"[{time.strftime('%H:%M:%S')}] 📝 Transcribing...", end="", flush=True)
+                                    sys.stdout.write(f" [{elapsed:.1f}s]\n")
+                                    sys.stdout.flush()
 
                                     # Send for transcription
-                                    transcription = send_audio_for_transcription(audio_data)
+                                    transcription = send_audio_for_transcription(audio_data, LANGUAGE)
 
                                     if transcription:
-                                        print(f"\r[{time.strftime('%H:%M:%S')}] → {transcription}")
+                                        print(f"   → {transcription}\n")
                                     else:
-                                        print(f"\r[{time.strftime('%H:%M:%S')}] → (no speech detected)")
-                                    print()
+                                        print(f"   → (empty)\n")
                                 else:
-                                    print(" (too short, ignored)")
+                                    sys.stdout.write(f" [too short: {elapsed:.1f}s]\n")
+                                    sys.stdout.flush()
 
                                 # Reset state
                                 is_speaking = False
@@ -239,7 +245,7 @@ def main():
     except KeyboardInterrupt:
         print("\n\n👋 Stopping...")
     except Exception as e:
-        print(f"\n\nError: {e}", file=sys.stderr)
+        print(f"\n\n⚠️  Error: {e}", file=sys.stderr)
         import traceback
         traceback.print_exc()
 
